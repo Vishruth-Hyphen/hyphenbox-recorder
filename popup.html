@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>User Interaction Recorder</title>
+  <style>
+    body { width: 300px; padding: 15px; }
+    button { margin: 5px; padding: 8px 16px; }
+  </style>
+</head>
+<body>
+  <div id="not-recording">
+    <button id="start-recording">Start Recording</button>
+  </div>
+  
+  <div id="recording" style="display: none;">
+    <p>Recording... (<span id="interaction-count">0</span> clicks)</p>
+    <button id="stop-recording">Stop Recording</button>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
