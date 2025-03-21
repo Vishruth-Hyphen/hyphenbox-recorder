@@ -52,7 +52,112 @@ function stopRecording() {
   });
 }
 
-// Record click events
+// Enhanced function to generate better selectors with proper priority
+function generateSelector(el) {
+  // Try ID selector (fastest)
+  if (el.id) return `#${el.id}`;
+  
+  // For links, use href-based selector (very reliable & fast)
+  if (el.tagName === 'A' && el.getAttribute('href')) {
+    const href = el.getAttribute('href');
+    return `a[href="${href}"]`;
+  }
+  
+  // For inputs, use name and type (very reliable)
+  if (el.tagName === 'INPUT' && el.getAttribute('name')) {
+    const type = el.getAttribute('type') || 'text';
+    return `input[name="${el.getAttribute('name')}"][type="${type}"]`;
+  }
+  
+  // For elements with data attributes, use those (reliable & fast)
+  const dataAttrs = Array.from(el.attributes)
+    .filter(attr => attr.name.startsWith('data-'));
+  
+  if (dataAttrs.length > 0) {
+    // Use the first data attribute for simplicity
+    const attr = dataAttrs[0];
+    return `${el.tagName.toLowerCase()}[${attr.name}="${attr.value}"]`;
+  }
+  
+  // For elements with semantic classes, use tag+class (reliable & fairly fast)
+  const semanticClasses = Array.from(el.classList)
+    .filter(className => 
+      // Filter for semantic class names (avoid hash-based ones)
+      !/^[a-z][0-9]_[a-f0-9]+$/.test(className) && 
+      !className.match(/^[a-z][0-9]?$/) &&
+      className.length > 2 
+    );
+  
+  if (semanticClasses.length > 0) {
+    // Use the most specific semantic class
+    const bestClass = semanticClasses.sort((a, b) => b.length - a.length)[0];
+    return `${el.tagName.toLowerCase()}.${bestClass}`;
+  }
+  
+  // Fall back to text-based selector for interactive elements
+  if ((el.tagName === 'BUTTON' || el.tagName === 'A') && el.textContent.trim()) {
+    return `${el.tagName.toLowerCase()}:contains("${el.textContent.trim()}")`;
+  }
+  
+  // Last resort: use nth-child (least reliable)
+  const siblings = Array.from(el.parentNode.children);
+  const index = siblings.indexOf(el) + 1;
+  return `${el.tagName.toLowerCase()}:nth-child(${index})`;
+}
+
+// Enhanced path generation with more reliable identification
+function generatePath(el) {
+  const path = [];
+  
+  while (el && el !== document.body) {
+    // Start with the tag name
+    let selector = el.nodeName.toLowerCase();
+    
+    // Add ID if available
+    if (el.id) {
+      selector = `#${el.id}`;
+      path.unshift(selector);
+      break;
+    } 
+    
+    // Add href for links (helps with identification)
+    else if (el.tagName === 'A' && el.getAttribute('href')) {
+      selector += `[href="${el.getAttribute('href')}"]`;
+    }
+    
+    // Add name for form elements
+    else if (el.getAttribute('name')) {
+      selector += `[name="${el.getAttribute('name')}"]`;
+    }
+    
+    // Add data attributes if available
+    else {
+      const dataAttrs = Array.from(el.attributes)
+        .filter(attr => attr.name.startsWith('data-'));
+      
+      if (dataAttrs.length > 0) {
+        selector += `[${dataAttrs[0].name}="${dataAttrs[0].value}"]`;
+      }
+      // Add position when needed
+      else {
+        const siblings = Array.from(el.parentNode.children).filter(sibling => 
+          sibling.nodeName === el.nodeName
+        );
+        if (siblings.length > 1) {
+          const index = siblings.indexOf(el) + 1;
+          selector += `:nth-of-type(${index})`;
+        }
+      }
+    }
+    
+    path.unshift(selector);
+    el = el.parentNode;
+  }
+  
+  return path;
+}
+
+// Enhanced click recording with more element data
 function recordClick(event) {
   if (!isRecording) return;
   
@@ -73,11 +178,28 @@ function recordClick(event) {
     // Generate a unique ID for this interaction
     const interactionId = `click_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    // Collect key attributes from the element - works with existing JSON structure
+    const elementAttributes = {};
+    Array.from(clickableElement.attributes).forEach(attr => {
+      // Filter out some attributes to avoid excessive data
+      if (!['style', 'class'].includes(attr.name)) {
+        elementAttributes[attr.name] = attr.value;
+      }
+    });
+    
+    // Get semantic classes (non-hashed)
+    const semanticClasses = Array.from(clickableElement.classList || [])
+      .filter(cls => 
+        !cls.match(/^[a-z][0-9]?_[a-f0-9]+$/) && 
+        cls.length > 2 && 
+        !cls.match(/^[a-z][0-9]?$/)
+      );
+    
     const interactionData = {
       id: interactionId,
       type: 'click',
       timestamp: new Date().toISOString(),
-      timeOffset: null, // This seems to be null in your sample
+      timeOffset: null,
       pageInfo: {
         url: window.location.href,
         path: window.location.pathname,
@@ -87,8 +209,13 @@ function recordClick(event) {
         tagName: clickableElement.tagName,
         id: clickableElement.id || null,
         textContent: clickableElement.textContent.trim(),
+        // Store key attributes in the cssSelector string
         cssSelector: generateSelector(clickableElement),
-        path: generatePath(clickableElement)
+        // Store attributes as part of the path array
+        path: generatePath(clickableElement),
+        // Add additional data as attributes to be compatible with existing format
+        attributes: JSON.stringify(elementAttributes),
+        semanticClasses: semanticClasses.join(' ')
       },
       position: {
         x: Math.round(event.clientX),
@@ -115,7 +242,8 @@ function recordClick(event) {
 
     console.log('[Content] Recorded click:', {
       element: interactionData.element.tagName,
-      text: interactionData.element.textContent.substring(0, 30)
+      text: interactionData.element.textContent.substring(0, 30),
+      selector: interactionData.element.cssSelector
     });
   } catch (error) {
     console.error('[Content] Error recording click:', error);
@@ -133,39 +261,6 @@ function findClickableParent(el) {
     el = el.parentElement;
   }
   return null;
-}
-
-function generateSelector(el) {
-  if (el.id) return `#${el.id}`;
-  if (el.tagName === 'A' && el.textContent.trim()) {
-    return `a:contains("${el.textContent.trim()}")`;
-  }
-  const siblings = Array.from(el.parentNode.children);
-  const index = siblings.indexOf(el) + 1;
-  return `${el.tagName.toLowerCase()}:nth-child(${index})`;
-}
-
-function generatePath(el) {
-  const path = [];
-  while (el && el !== document.body) {
-    let selector = el.nodeName.toLowerCase();
-    if (el.id) {
-      selector = `#${el.id}`;
-      path.unshift(selector);
-      break;
-    } else {
-      const siblings = Array.from(el.parentNode.children).filter(sibling => 
-        sibling.nodeName === el.nodeName
-      );
-      if (siblings.length > 1) {
-        const index = siblings.indexOf(el) + 1;
-        selector += `:nth-of-type(${index})`;
-      }
-    }
-    path.unshift(selector);
-    el = el.parentNode;
-  }
-  return path;
 }
 
 // Add this function to detect URL changes for SPA navigation
@@ -331,6 +426,21 @@ function recordTextInput(inputElement) {
     // Generate a unique ID for this interaction
     const interactionId = `input_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
+    // Collect attributes for input elements (especially important)
+    const elementAttributes = {};
+    Array.from(inputElement.attributes).forEach(attr => {
+      if (!['style', 'class'].includes(attr.name)) {
+        elementAttributes[attr.name] = attr.value;
+      }
+    });
+    
+    // Get parent form ID if available
+    let formId = null;
+    let formEl = inputElement.form;
+    if (formEl) {
+      formId = formEl.id || null;
+    }
+    
     const interactionData = {
       id: interactionId,
       type: 'input',
@@ -348,11 +458,14 @@ function recordTextInput(inputElement) {
         type: inputElement.type || 'text',
         value: inputElement.value,
         cssSelector: generateSelector(inputElement),
-        path: generatePath(inputElement)
+        path: generatePath(inputElement),
+        attributes: JSON.stringify(elementAttributes),
+        formId: formId,
+        placeholder: inputElement.placeholder || null
       },
-      position: null, // No specific position for text input
+      position: null,
       elementRect: elementRect,
-      screenshot: null // Will be updated with screenshot URL
+      screenshot: null
     };
 
     chrome.runtime.sendMessage({
