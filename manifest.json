@@ -2,17 +2,22 @@
   "manifest_version": 3,
   "name": "User Interaction Recorder",
   "version": "1.0",
-  "description": "Records user interactions for playback",
+  "description": "Records user interactions with screenshots for playback",
   "permissions": [
     "storage",
     "tabs",
-    "downloads"
+    "downloads",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.supabase.co/*"
   ],
   "action": {
     "default_popup": "popup.html"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "content_scripts": [
     {

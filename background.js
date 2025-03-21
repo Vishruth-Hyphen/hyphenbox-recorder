@@ -1,8 +1,6 @@
 // Recording state
 let recording = null;
 let currentTabId = null;
-
-// Add this to track content scripts across pages
 let contentScripts = {}; // Track which tabs have content scripts
 
 console.log('[Background] Service worker initialized');
@@ -20,6 +18,10 @@ function initializeRecording(sessionId, startTime, url, title) {
       title: title
     }
   };
+  
+  // Update the extension badge to indicate recording is in progress
+  chrome.action.setBadgeText({ text: "REC" });
+  chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
 }
 
 // Add an interaction to the recording
@@ -32,14 +34,47 @@ function addInteraction(interaction) {
   try {
     recording.interactions.push(interaction);
     recording.lastUpdated = new Date().toISOString();
+    
+    // Safer logging that checks if element exists
     console.log('[Background] Added interaction:', {
-      type: interaction.type,
-      element: interaction.element.tagName,
-      text: interaction.element.textContent.substring(0, 30)
+      id: interaction.id || 'unknown',
+      type: interaction.type || 'unknown',
+      // Only log element info if it exists
+      ...(interaction.element ? {
+        element: interaction.element.tagName,
+        text: interaction.element.textContent?.substring(0, 30)
+      } : {})
     });
+    
     saveRecording();
   } catch (error) {
     console.error('[Background] Error adding interaction:', error);
+  }
+}
+
+// Simplified screenshot capture function
+async function captureAndUploadScreenshot(tabId, sessionId, interactionId) {
+  try {
+    // Capture the visible tab
+    const dataUrl = await chrome.tabs.captureVisibleTab(
+      null, // Use current window
+      { format: 'png', quality: 80 } // Reduced quality to save space
+    );
+    
+    // For now, let's store the screenshot directly in the recording
+    // We'll skip Supabase integration to simplify
+    return {
+      success: true,
+      screenshotUrl: dataUrl,  // Just store the data URL directly for now
+      width: 0,
+      height: 0
+    };
+  } catch (error) {
+    console.error('[Screenshot Service] Error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 }
 
@@ -99,6 +134,38 @@ function exportRecording() {
 function clearRecording() {
   recording = null;
   chrome.storage.local.remove('currentRecording');
+  
+  // Clear the badge when recording stops
+  chrome.action.setBadgeText({ text: "" });
+}
+
+// New function to update an interaction with screenshot information
+function updateInteractionWithScreenshot(interactionId, screenshotInfo) {
+  if (!recording) {
+    console.warn('[Background] Attempted to update interaction without active recording');
+    return false;
+  }
+  
+  try {
+    // Find the interaction by ID
+    const interactionIndex = recording.interactions.findIndex(i => i.id === interactionId);
+    
+    if (interactionIndex === -1) {
+      console.warn('[Background] Interaction not found:', interactionId);
+      return false;
+    }
+    
+    // Update the interaction with screenshot info
+    recording.interactions[interactionIndex].screenshot = screenshotInfo;
+    recording.lastUpdated = new Date().toISOString();
+    
+    console.log('[Background] Updated interaction with screenshot:', interactionId);
+    saveRecording();
+    return true;
+  } catch (error) {
+    console.error('[Background] Error updating interaction:', error);
+    return false;
+  }
 }
 
 // Listen for messages from content script and popup
@@ -120,6 +187,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       addInteraction(message.data);
       sendResponse({ status: 'saved' });
     }
+    // Add new handler for screenshot requests
+    else if (message.type === 'take-screenshot') {
+      // We need to send an immediate response and then handle the screenshot asynchronously
+      sendResponse({ status: 'processing' });
+      
+      // Process the screenshot capture and upload
+      captureAndUploadScreenshot(
+        sender.tab.id, 
+        recording.id, 
+        message.interactionId
+      ).then(result => {
+        // Send the result back to the content script
+        chrome.tabs.sendMessage(sender.tab.id, {
+          action: 'screenshot-result',
+          interactionId: message.interactionId,
+          result: result
+        });
+      });
+      
+      return true; // Keep the message channel open for the async response
+    }
     else if (message.type === 'recording-stopped') {
       console.log('[Background] Stopping recording and triggering export...');
       const exported = exportRecording();
@@ -127,7 +215,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Clear tab tracking
       contentScripts = {};
       
-      recording = null; // Clear the recording after export
+      // Clear recording
+      clearRecording();
+      
       sendResponse({ 
         status: exported ? 'exported' : 'export-failed',
         message: exported ? 'Recording exported successfully' : 'Failed to export recording'
@@ -148,6 +238,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } else {
         sendResponse({ isRecording: false });
       }
+    }
+    else if (message.type === 'update-interaction') {
+      const updated = updateInteractionWithScreenshot(message.interactionId, message.screenshot);
+      sendResponse({ status: updated ? 'updated' : 'failed' });
     }
   } catch (error) {
     console.error('[Background] Error handling message:', error);

@@ -5,6 +5,24 @@
   <style>
     body { width: 300px; padding: 15px; }
     button { margin: 5px; padding: 8px 16px; }
+    #popup-info { 
+      display: none; 
+      font-size: 12px; 
+      color: #666; 
+      margin-top: 10px;
+      padding: 5px;
+      background-color: #f8f8f8;
+      border-radius: 4px;
+    }
+    #error-info {
+      display: none;
+      font-size: 12px;
+      color: #cc0000;
+      margin-top: 10px;
+      padding: 5px;
+      background-color: #ffeeee;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -16,6 +34,9 @@
     <p>Recording... (<span id="interaction-count">0</span> clicks)</p>
     <button id="stop-recording">Stop Recording</button>
   </div>
+  
+  <div id="popup-info"></div>
+  <div id="error-info"></div>
   
   <script src="popup.js"></script>
 </body>

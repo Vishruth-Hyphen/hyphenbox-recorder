@@ -28,6 +28,7 @@ function startRecording() {
   });
   
   document.addEventListener('click', recordClick, true);
+  setupTextInputRecording();
   setupSPANavigationListener();
 }
 
@@ -69,7 +70,11 @@ function recordClick(event) {
       height: rect.height
     };
     
+    // Generate a unique ID for this interaction
+    const interactionId = `click_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     const interactionData = {
+      id: interactionId,
       type: 'click',
       timestamp: new Date().toISOString(),
       timeOffset: null, // This seems to be null in your sample
@@ -89,9 +94,11 @@ function recordClick(event) {
         x: Math.round(event.clientX),
         y: Math.round(event.clientY)
       },
-      elementRect: elementRect
+      elementRect: elementRect,
+      screenshot: null // Will be updated with screenshot URL
     };
 
+    // Send the interaction data first
     chrome.runtime.sendMessage({
       type: 'interaction',
       data: interactionData
@@ -100,6 +107,9 @@ function recordClick(event) {
         console.error('[Content] Error sending interaction:', chrome.runtime.lastError);
       } else if (response && response.status === 'saved') {
         console.log('[Content] Recorded click saved successfully');
+        
+        // Now request a screenshot
+        requestScreenshot(interactionId);
       }
     });
 
@@ -281,4 +291,132 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ error: error.message });
   }
   return true;
-}); 
+});
+
+// Add text input recording
+function setupTextInputRecording() {
+  const textInputSelector = 'input[type="text"], input[type="email"], input[type="password"], textarea';
+  
+  // Handle text input completion (blur event)
+  document.addEventListener('blur', (event) => {
+    if (!isRecording) return;
+    
+    if (event.target.matches(textInputSelector) && event.target.value) {
+      recordTextInput(event.target);
+    }
+  }, true);
+  
+  // Also capture Enter key for form submissions
+  document.addEventListener('keydown', (event) => {
+    if (!isRecording) return;
+    
+    if (event.key === 'Enter' && event.target.matches(textInputSelector) && event.target.value) {
+      recordTextInput(event.target);
+    }
+  }, true);
+}
+
+function recordTextInput(inputElement) {
+  interactionCount++;
+  
+  try {
+    const rect = inputElement.getBoundingClientRect();
+    const elementRect = {
+      top: rect.top,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height
+    };
+    
+    // Generate a unique ID for this interaction
+    const interactionId = `input_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const interactionData = {
+      id: interactionId,
+      type: 'input',
+      timestamp: new Date().toISOString(),
+      timeOffset: null,
+      pageInfo: {
+        url: window.location.href,
+        path: window.location.pathname,
+        title: document.title
+      },
+      element: {
+        tagName: inputElement.tagName,
+        id: inputElement.id || null,
+        name: inputElement.name || null,
+        type: inputElement.type || 'text',
+        value: inputElement.value,
+        cssSelector: generateSelector(inputElement),
+        path: generatePath(inputElement)
+      },
+      position: null, // No specific position for text input
+      elementRect: elementRect,
+      screenshot: null // Will be updated with screenshot URL
+    };
+
+    chrome.runtime.sendMessage({
+      type: 'interaction',
+      data: interactionData
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Content] Error sending text input interaction:', chrome.runtime.lastError);
+      } else if (response && response.status === 'saved') {
+        console.log('[Content] Recorded text input saved successfully');
+        
+        // Now request a screenshot
+        requestScreenshot(interactionId);
+      }
+    });
+  } catch (error) {
+    console.error('[Content] Error recording text input:', error);
+  }
+}
+
+// Function to request a screenshot from the background script
+function requestScreenshot(interactionId) {
+  chrome.runtime.sendMessage({
+    type: 'take-screenshot',
+    interactionId: interactionId
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('[Content] Error requesting screenshot:', chrome.runtime.lastError);
+    } else {
+      console.log('[Content] Screenshot request acknowledged:', response);
+    }
+  });
+}
+
+// Listen for screenshot results from background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'screenshot-result') {
+    updateInteractionWithScreenshot(message.interactionId, message.result);
+    sendResponse({ status: 'received' });
+  }
+  return true;
+});
+
+// Function to update an interaction with its screenshot URL
+function updateInteractionWithScreenshot(interactionId, screenshotResult) {
+  if (!screenshotResult.success) {
+    console.error('[Content] Screenshot failed:', screenshotResult.error);
+    return;
+  }
+  
+  // Send a message to update the interaction with the screenshot URL
+  chrome.runtime.sendMessage({
+    type: 'update-interaction',
+    interactionId: interactionId,
+    screenshot: {
+      url: screenshotResult.screenshotUrl,
+      width: window.innerWidth,
+      height: window.innerHeight
+    }
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      console.error('[Content] Error updating interaction with screenshot:', chrome.runtime.lastError);
+    } else {
+      console.log('[Content] Interaction updated with screenshot:', screenshotResult.screenshotUrl);
+    }
+  });
+} 
