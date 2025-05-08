@@ -3,6 +3,11 @@ let isRecording = false;
 let startTime = null;
 let interactionCount = 0;
 
+// Hover highlight state
+let currentHoverTarget = null; // Element currently highlighted on hover
+const HOVER_HIGHLIGHT_STYLE = '2px dashed #FF00FF'; // Magenta dashed outline
+const HOVER_HIGHLIGHT_SHADOW = '0 0 5px #FF00FF'; // Optional shadow for more visibility
+
 // Start recording function
 function startRecording() {
   console.log('[Content] Starting recording...');
@@ -30,6 +35,9 @@ function startRecording() {
   document.addEventListener('click', recordClick, true);
   setupTextInputRecording();
   setupSPANavigationListener();
+  // Add listeners for hover highlighting
+  document.addEventListener('mousemove', handleMouseMoveForHighlight, true);
+  document.body.addEventListener('mouseleave', clearHoverHighlight, true);
 }
 
 // Stop recording function
@@ -38,6 +46,11 @@ function stopRecording() {
   
   console.log('[Content] Stopping recording and triggering download...');
   document.removeEventListener('click', recordClick, true);
+  // Remove listeners for hover highlighting
+  document.removeEventListener('mousemove', handleMouseMoveForHighlight, true);
+  document.body.removeEventListener('mouseleave', clearHoverHighlight, true);
+  clearHoverHighlight(); // Ensure any lingering highlight is removed
+
   isRecording = false;
   
   // Send stop message and wait for confirmation
@@ -51,6 +64,47 @@ function stopRecording() {
     }
   });
 }
+
+// --- Hover Highlighting Functions ---
+function handleMouseMoveForHighlight(event) {
+  if (!isRecording) {
+    // If not recording, ensure no highlight is active and remove listener if any
+    clearHoverHighlight();
+    return;
+  }
+
+  // Determine the element to highlight, considering clickable parents
+  let targetElement = findClickableParent(event.target) || event.target;
+
+  // Avoid highlighting the entire body or html tag itself if it's the target
+  if (targetElement === document.body || targetElement === document.documentElement) {
+    clearHoverHighlight();
+    return;
+  }
+
+  if (targetElement === currentHoverTarget) {
+    return; // No change
+  }
+
+  // Clear previous highlight
+  clearHoverHighlight();
+
+  // Apply new highlight
+  if (targetElement && typeof targetElement.style !== 'undefined') {
+    targetElement.style.outline = HOVER_HIGHLIGHT_STYLE;
+    targetElement.style.boxShadow = HOVER_HIGHLIGHT_SHADOW; // Optional: for better visibility
+    currentHoverTarget = targetElement;
+  }
+}
+
+function clearHoverHighlight() {
+  if (currentHoverTarget && typeof currentHoverTarget.style !== 'undefined') {
+    currentHoverTarget.style.outline = '';
+    currentHoverTarget.style.boxShadow = ''; // Clear the optional shadow
+  }
+  currentHoverTarget = null;
+}
+// --- End Hover Highlighting Functions ---
 
 // Enhanced function to generate better selectors with proper priority
 function generateSelector(el) {
@@ -166,7 +220,6 @@ function recordClick(event) {
   interactionCount++;
   
   try {
-    // Create element rect with specific properties matching the sample
     const rect = clickableElement.getBoundingClientRect();
     const elementRect = {
       top: rect.top,
@@ -175,25 +228,33 @@ function recordClick(event) {
       height: rect.height
     };
     
-    // Generate a unique ID for this interaction
     const interactionId = `click_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    // Collect key attributes from the element - works with existing JSON structure
     const elementAttributes = {};
     Array.from(clickableElement.attributes).forEach(attr => {
-      // Filter out some attributes to avoid excessive data
       if (!['style', 'class'].includes(attr.name)) {
         elementAttributes[attr.name] = attr.value;
       }
     });
     
-    // Get semantic classes (non-hashed)
     const semanticClasses = Array.from(clickableElement.classList || [])
       .filter(cls => 
         !cls.match(/^[a-z][0-9]?_[a-f0-9]+$/) && 
         cls.length > 2 && 
         !cls.match(/^[a-z][0-9]?$/)
       );
+
+    // Strict normalization for the main clickableElement's textContent
+    let normalizedTextContent = '';
+    let rawText = '';
+    if (clickableElement.innerText !== undefined && clickableElement.innerText.trim() !== '') {
+        rawText = clickableElement.innerText;
+    } else if (clickableElement.textContent && clickableElement.textContent.trim() !== '') {
+        rawText = clickableElement.textContent;
+    }
+    if (rawText) {
+        normalizedTextContent = rawText.trim().toLowerCase().replace(/\s+/g, ''); // Remove all whitespace
+    }
     
     const interactionData = {
       id: interactionId,
@@ -208,12 +269,9 @@ function recordClick(event) {
       element: {
         tagName: clickableElement.tagName,
         id: clickableElement.id || null,
-        textContent: clickableElement.textContent.trim(),
-        // Store key attributes in the cssSelector string
+        textContent: normalizedTextContent, // Use strictly normalized text
         cssSelector: generateSelector(clickableElement),
-        // Store attributes as part of the path array
         path: generatePath(clickableElement),
-        // Add additional data as attributes to be compatible with existing format
         attributes: JSON.stringify(elementAttributes),
         semanticClasses: semanticClasses.join(' ')
       },
@@ -222,10 +280,9 @@ function recordClick(event) {
         y: Math.round(event.clientY)
       },
       elementRect: elementRect,
-      screenshot: null // Will be updated with screenshot URL
+      screenshot: null
     };
 
-    // Send the interaction data first
     chrome.runtime.sendMessage({
       type: 'interaction',
       data: interactionData
@@ -255,7 +312,10 @@ function findClickableParent(el) {
   while (el && el !== document.body) {
     if (el.tagName === 'A' || el.tagName === 'BUTTON' || 
         el.tagName === 'INPUT' || el.onclick || 
-        el.getAttribute('role') === 'button') {
+        el.getAttribute('role') === 'button' ||
+        // Consider other potentially clickable roles or custom attributes if needed
+        el.hasAttribute('data-clickable') // Example for custom clickable elements
+       ) {
       return el;
     }
     el = el.parentElement;
